@@ -1,0 +1,59 @@
+# ===================================
+# Dependencias -instalacion de las dependencias
+# ===================================
+FROM node:21-alpine3.19 AS deps
+
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+
+RUN npm install
+
+# ===================================
+# Builder -construccion de la imagen
+# ===================================
+FROM node:21-alpine3.19 AS build
+
+WORKDIR /usr/src/app
+
+#copiar de deps, los modulos de noce
+
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+
+#copiar todo el codigo fuente de la aplicacion
+COPY . .
+
+#se puede ejecutar npm run build para construir la aplicacion, osea transpilar el codigo fuente a codigo que pueda ser ejecutado por node
+RUN npm run build
+
+# dependencias de Produccion
+RUN npm ci --only=production && npm cache clean --force
+
+# generar el cliente de prisma, esto es necesario para que el cliente de prisma pueda ser utilizado en la aplicacion, ya que el cliente de prisma es generado a partir del esquema de prisma, y el esquema de prisma se encuentra en el codigo fuente de la aplicacion, por lo que es necesario generar el cliente de prisma despues de copiar el codigo fuente de la aplicacion
+RUN npx prisma generate
+# ===================================
+# Crear la imagen de producción
+# ===================================
+FROM node:21-alpine3.19 AS prod
+
+WORKDIR /usr/src/app
+
+#copiar los modulos de node de produccion
+COPY --from=build /usr/src/app/node_modules ./node_modules
+
+#copiar el codigo fuente de la aplicacion
+COPY --from=build /usr/src/app/dist ./dist
+
+#copiar el cliente de prisma generado en build, esto es necesario para que el cliente de prisma pueda ser utilizado en la aplicacion, ya que el cliente de prisma es generado a partir del esquema de prisma, y el esquema de prisma se encuentra en el codigo fuente de la aplicacion, por lo que es necesario copiar el cliente de prisma generado en build a la imagen de produccion
+COPY --from=build /usr/src/app/generated ./generated 
+
+#env es para establecer variables de entorno, en este caso se establece NODE_ENV a production, lo que indica que la aplicacion se ejecutara en modo produccion
+ENV NODE_ENV=production
+
+#usuario de node, para que la aplicacion se ejecute con un usuario no root, lo que es una buena practica de seguridad
+USER node
+
+
+EXPOSE 3000
+
+CMD ["node", "dist/src/main.js"]
